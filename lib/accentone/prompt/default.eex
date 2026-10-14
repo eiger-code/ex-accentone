@@ -1,0 +1,23 @@
+Analyze this image and extract an ordered palette of colors for the requested roles.
+
+Return a JSON object with exactly these keys:
+
+{
+<%= for {{field, hex, confidence}, i} <- Enum.with_index(examples) do %>  "<%= field %>": [
+    {"hex": "<%= hex %>", "confidence": <%= confidence %>}
+  ]<%= if i < length(examples) - 1, do: "," %>
+<% end %>}
+
+<%= for {field, count, description} <- sections do %><%= field %> (at most <%= count %> colors, ordered most to least important): <%= description %>
+
+<% end %>Omit a role, or return fewer colors for it, rather than repeating a color or padding the list with a near-duplicate. Each distinct color belongs under only one role; if it qualifies for several, put it under the single best fit.
+
+Color format: each "hex" must be exactly 6 hexadecimal digits (0-9, A-F), uppercase, with no leading "#". Do not return color names, rgb() values, or any other format.
+
+confidence: For each color, a number from 0.3 to 1.0 expressing how strongly the image supports that color for that role. If you would score a color below 0.3, omit it instead of listing it:
+- 0.90 and above: Extremely confident - the color is highly prominent and unambiguous
+- 0.70 to below 0.90: Very confident - the color is clearly present and well-defined
+- 0.50 to below 0.70: Moderately confident - the color is present but may have variations
+- 0.30 to below 0.50: Low confidence - the color is subtle or context-dependent
+
+Respond with the JSON object only. Do not include explanations, commentary, or markdown code fences.

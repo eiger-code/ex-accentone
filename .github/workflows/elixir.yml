@@ -1,0 +1,201 @@
+---
+name: Elixir CI
+
+"on":
+  push:
+    branches: ["main", "release/*", "dev"]
+  pull_request:
+    branches: ["main", "release/*"]
+
+env:
+  MIX_ENV: test
+  # The newest toolchain the suite is checked on: `check` and `dialyzer` read
+  # these, and an edit to this file rotates the caches (their keys hash it), so
+  # a version bump cannot restore artifacts built by the old toolchain. 1.20 is
+  # the newest version mix.exs's `~> 1.18` floor admits, and it supports OTP
+  # 27-29; 29 matches local development. The `compat` job proves the floor.
+  OTP_VERSION: "29"
+  ELIXIR_VERSION: "1.20"
+
+permissions:
+  contents: read
+
+# A push-happy branch should not queue redundant runs behind the PLT job, so a
+# new run for the same ref supersedes whatever is in flight. `main` is the
+# exception: it is the branch a release is cut from, and a cancelled run there
+# would leave that commit's status ambiguous rather than merely stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    name: Build and check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every dependency comes from Hex (there are no git deps) and this
+          # job never pushes, so the checkout token does not need to persist.
+          persist-credentials: false
+      - name: Set up Elixir
+        # Pinned by commit SHA for the v1.24.1 tag. This also installs Hex and
+        # rebar3, both of which `mix deps.get` needs (`telemetry`, pulled in by
+        # `plug` and `finch`, is the one remaining rebar3-managed dep).
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      # `runner.os` is left out of the cache keys: the job only runs on
+      # ubuntu-latest.
+      - name: Restore dependencies cache
+        uses: actions/cache@v6
+        with:
+          path: deps
+          key: deps-${{ hashFiles('mix.lock', '.github/**') }}
+          restore-keys: deps-
+      - name: Restore build cache
+        uses: actions/cache@v6
+        with:
+          path: _build
+          key: build-${{ hashFiles('mix.lock', '.github/**') }}
+          restore-keys: build-
+      # `--check-locked` fails when `mix.lock` is not what `mix.exs` resolves
+      # to, so a dependency added without its lockfile update is a red build
+      # rather than a run that quietly resolves something else.
+      - name: Install dependencies
+        run: mix deps.get --check-locked
+      # The same checks the README lists for a pull request.
+      - name: Run checks
+        run: |
+          mix format --check-formatted
+          mix compile --warnings-as-errors
+          mix test
+          # The order-dependence gate: a random-order run above, then a fixed
+          # seed. Coverage rides the seeded run, so the floor is enforced on the
+          # pass that is reproducible and `--cover` does not buy a third full
+          # run for the same information.
+          mix test --seed 0 --cover
+          mix credo --strict
+          # No allowlist: the tree carries no advisory, and the swap to Bandit
+          # is what keeps it that way. A future
+          # advisory fails here instead of going unnoticed.
+          mix hex.audit
+          mix deps.unlock --check-unused
+
+      # Packaging is published surface too: `package: files:` decides what a Hex
+      # user receives, so a file that stops shipping — a renamed asset, a
+      # template outside `lib/` — is caught here rather than at publish time.
+      - name: Build the package
+        run: mix hex.build
+
+  dialyzer:
+    name: Dialyzer and docs
+    runs-on: ubuntu-latest
+    # A cold run builds the PLT before analysing anything.
+    timeout-minutes: 30
+    env:
+      # `mix dialyzer` and `mix docs` both run in the default (dev)
+      # environment, so this job uses its own cache entries rather than the
+      # test job's.
+      MIX_ENV: dev
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Restore dependencies cache
+        uses: actions/cache@v6
+        with:
+          path: deps
+          key: deps-${{ hashFiles('mix.lock', '.github/**') }}
+          restore-keys: deps-
+      # Dialyxir keeps its PLTs under _build/<env>/dialyxir_*.plt, so caching
+      # _build saves the expensive PLT build on later runs.
+      - name: Restore build and PLT cache
+        uses: actions/cache@v6
+        with:
+          path: _build
+          key: plt-${{ hashFiles('mix.lock', '.github/**') }}
+          restore-keys: plt-
+      - name: Install dependencies
+        run: mix deps.get --check-locked
+      - name: Run Dialyzer
+        run: mix dialyzer
+      # `mix docs` needs `ex_doc`, which is `only: :dev` — the same environment
+      # this job already builds and caches, so the docs gate costs a step here
+      # rather than a job of its own. `--warnings-as-errors` is the point: a
+      # broken `@doc` link or a missing extra is a *warning*, so a plain
+      # `mix docs` would exit zero on exactly what this step exists to catch.
+      - name: Build docs
+        run: mix docs --warnings-as-errors
+
+  # `mix.exs` declares `elixir: "~> 1.18"`, so the published surface is Elixir
+  # 1.18 through 1.20 across OTP 27-29.
+  # `check` proves the newest pair (1.20/29) and `dialyzer` re-proves it; this
+  # matrix proves the pairs `check` leaves untested — the floor's own pair
+  # (1.18/27) and the middle (1.19/28).
+  # A floor is a promise Hex enforces for every caller, and an unverified
+  # promise is a guess. Test-only by design: warnings-as-errors, the seeded
+  # coverage run, Credo, the audit, and the docs all run once in
+  # `check`/`dialyzer`, and repeating them per version buys no new information.
+  compat:
+    name: Compat (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-latest
+    # One broken pair must not cancel the others: the point of the matrix is to
+    # see *which* pair broke, not merely that some pair did.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.18"
+            otp: "27"
+            key: "1.18-27"
+          - elixir: "1.19"
+            otp: "28"
+            key: "1.19-28"
+          - elixir: "1.20"
+            otp: "29"
+            key: "1.20-29"
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      # deps/ holds fetched source, not compiled beams, so it is
+      # toolchain-independent: the same `deps-` key the other jobs use is
+      # correct here, and a restore from their tree is a no-op at worst. (The
+      # build cache below cannot make that claim, which is why it is separate.)
+      - name: Restore dependencies cache
+        uses: actions/cache@v6
+        with:
+          path: deps
+          key: deps-${{ hashFiles('mix.lock', '.github/**') }}
+          restore-keys: deps-
+      # `cb-` is `_build` for the compat legs. It cannot be a `build-` key: a
+      # cache restore-key is a prefix match, so the check job's `build-` would
+      # pull in beams compiled by a different Elixir/OTP pair. `matrix.key`
+      # keeps the two legs apart for the same reason.
+      - name: Restore build cache
+        uses: actions/cache@v6
+        with:
+          path: _build
+          key: cb-${{ matrix.key }}-${{ hashFiles('mix.lock', '.github/**') }}
+          restore-keys: cb-${{ matrix.key }}-
+      - name: Install dependencies
+        run: mix deps.get --check-locked
+      - name: Compile and test on the matrix pair
+        run: |
+          mix compile --warnings-as-errors
+          mix test

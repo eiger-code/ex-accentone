@@ -1,0 +1,8 @@
+Extract colors from this image. Return a JSON object with exactly these keys:
+<%= Enum.map_join(sections, "\n", &elem(&1, 0)) %>
+
+Each value is an array of objects of exactly this shape: {"hex": "3A6EA5", "confidence": 0.87}, ordered from most to least important.
+
+<%= for {field, count, description} <- sections do %><%= field %> (at most <%= count %> colors, ordered most to least important): <%= description %>
+<% end %>
+Hex must be exactly 6 hexadecimal digits (0-9, A-F), uppercase, with no leading "#". Omit a role, or return fewer colors for it, rather than repeating a color or padding the list. Respond with the JSON object only.

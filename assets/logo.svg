@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" role="img" aria-labelledby="title desc">
+  <title id="title">Accentone</title>
+  <desc id="desc">An image plate with a mountain and sun, plus an accent colour swatch.</desc>
+
+  <defs>
+    <linearGradient id="key" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <clipPath id="plate">
+      <rect width="140" height="140" rx="32"/>
+    </clipPath>
+    <!-- Punches a transparent gap around the accent swatch so the mark works on any background. -->
+    <mask id="gap">
+      <rect width="160" height="160" fill="#fff"/>
+      <circle cx="122" cy="122" r="32" fill="#000"/>
+    </mask>
+  </defs>
+
+  <g mask="url(#gap)">
+    <rect width="140" height="140" rx="32" fill="url(#key)"/>
+    <g clip-path="url(#plate)">
+      <circle cx="44" cy="44" r="14" fill="#FBBF24"/>
+      <path d="M-2 114 L44 64 L78 100 L96 82 L142 128 L142 140 L-2 140 Z" fill="#FFFFFF" opacity=".92"/>
+    </g>
+  </g>
+  <circle cx="122" cy="122" r="23" fill="url(#accent)"/>
+</svg>

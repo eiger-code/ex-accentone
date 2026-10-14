@@ -1,0 +1,1 @@
+The desaturated, low-chroma counterpart of the dominant color: the same hue family as key_colors with saturation pulled toward grey — grey-blue where the key is blue, dusty rose where the key is red. Do not return a fully neutral grey unless the key color is itself neutral.
